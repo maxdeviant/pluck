@@ -1,8 +1,8 @@
 mod lastfm;
 
-use std::env;
+use std::{collections::HashMap, env};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use dotenv::dotenv;
 use serde::Serialize;
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -24,38 +24,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let lastfm_user = env::var("LASTFM_USER")?;
     let lastfm_api_key = env::var("LASTFM_API_KEY")?;
 
-    let url = format!("https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user={user}&api_key={api_key}&format=json", user = lastfm_user, api_key = lastfm_api_key);
+    let mut tracks_by_year: HashMap<i32, Vec<Track>> = HashMap::new();
+
+    let mut current_page = 1;
+
+    let url = format!("https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user={user}&api_key={api_key}&format=json&page={page}&limit=200", user = lastfm_user, api_key = lastfm_api_key, page = current_page);
     let response = reqwest::get(url)
         .await?
         .json::<GetRecentTracksResponse>()
         .await?;
 
-    let mut formatted_tracks = Vec::new();
+    let total_pages = response.recent_tracks.metadata.total_pages;
 
-    for track in response.recent_tracks.track {
-        let track = Track {
-            name: track.name,
-            artist: track.artist.name,
-            album: track.album.name,
-            listened_at: track.date.timestamp,
-        };
+    loop {
+        println!("Processing page {} of {}", current_page, total_pages);
 
-        formatted_tracks.push(track);
+        let url = format!("https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user={user}&api_key={api_key}&format=json&page={page}&limit=200", user = lastfm_user, api_key = lastfm_api_key, page = current_page);
+        let response = reqwest::get(url)
+            .await?
+            .json::<GetRecentTracksResponse>()
+            .await?;
+
+        for track in response.recent_tracks.track {
+            let track = Track {
+                name: track.name,
+                artist: track.artist.name,
+                album: track.album.name,
+                listened_at: track.date.timestamp,
+            };
+
+            let year = track.listened_at.year();
+
+            tracks_by_year.entry(year).or_insert(Vec::new()).push(track);
+        }
+
+        current_page += 1;
+
+        if current_page > 1 {
+            break;
+        }
     }
 
     #[derive(Debug, Serialize)]
-    struct Output {
+    struct YearData {
         tracks: Vec<Track>,
     }
 
-    let mut file = File::create("2022.toml").await?;
-    file.write_all(
-        toml::to_string_pretty(&Output {
-            tracks: formatted_tracks,
-        })?
-        .as_bytes(),
-    )
-    .await?;
+    for (year, mut tracks) in tracks_by_year {
+        tracks.sort_unstable_by(|a, b| b.listened_at.cmp(&a.listened_at));
+
+        let mut file = File::create(format!("last.fm/{}.toml", year)).await?;
+        file.write_all(toml::to_string_pretty(&YearData { tracks: tracks })?.as_bytes())
+            .await?;
+    }
 
     Ok(())
 }
