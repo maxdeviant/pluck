@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         current_page += 1;
 
-        if current_page > 1 {
+        if current_page > total_pages {
             break;
         }
     }
