@@ -1,66 +1,84 @@
-use chrono::{DateTime, Utc};
-use serde::Deserialize;
-use serde_with::{serde_as, DisplayFromStr, TimestampSeconds};
+mod types;
 
-/// The response from the [`user.getRecentTracks`](https://www.last.fm/api/show/user.getRecentTracks) method.
-#[derive(Debug, Deserialize)]
-pub struct GetRecentTracksResponse {
-    #[serde(rename = "recenttracks")]
-    pub recent_tracks: RecentTracks,
+use std::path::Path;
+
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+pub use types::*;
+
+pub struct LastfmFetcher {
+    user: String,
+    api_key: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct RecentTracks {
-    pub track: Vec<Track>,
+impl LastfmFetcher {
+    pub fn new(user: String, api_key: String) -> Self {
+        Self { user, api_key }
+    }
 
-    #[serde(rename = "@attr")]
-    pub metadata: Metadata,
-}
+    pub async fn fetch_tracks_page_with_cache(
+        &self,
+        page: i32,
+    ) -> Result<GetRecentTracksResponse, Box<dyn std::error::Error>> {
+        let cache_dir = Path::new(".cache/lastfm");
 
-#[derive(Debug, Deserialize)]
-pub struct Track {
-    pub name: String,
-    pub artist: Artist,
-    pub album: Album,
-    pub date: TrackDate,
-}
+        if !cache_dir.exists() {
+            tokio::fs::create_dir_all(cache_dir).await?;
+        }
 
-#[derive(Debug, Deserialize)]
-pub struct Artist {
-    #[serde(rename = "#text")]
-    pub name: String,
-}
+        let cached_page_path = cache_dir.join(format!("{}.json", page));
 
-#[derive(Debug, Deserialize)]
-pub struct Album {
-    #[serde(rename = "#text")]
-    pub name: String,
-}
+        if cached_page_path.exists() {
+            println!("Fetching page {} from cache", page);
 
-#[serde_as]
-#[derive(Debug, Deserialize)]
-pub struct TrackDate {
-    #[serde_as(as = "TimestampSeconds<String>")]
-    #[serde(rename = "uts")]
-    pub timestamp: DateTime<Utc>,
+            let mut cached_page = File::open(&cached_page_path).await?;
+            let mut buffer = String::new();
+            cached_page.read_to_string(&mut buffer).await?;
 
-    #[serde(rename = "#text")]
-    pub text: String,
-}
+            let response: GetRecentTracksResponse = serde_json::from_str(&buffer)?;
 
-#[serde_as]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Metadata {
-    #[serde_as(as = "DisplayFromStr")]
-    pub page: i32,
+            Ok(response)
+        } else {
+            println!("Fetching page {} from last.fm", page);
 
-    #[serde_as(as = "DisplayFromStr")]
-    pub total_pages: i32,
+            let response = self.fetch_tracks_page(page).await?;
 
-    #[serde_as(as = "DisplayFromStr")]
-    pub per_page: i32,
+            let mut cached_page = File::create(cached_page_path).await?;
+            cached_page
+                .write_all(serde_json::to_string_pretty(&response)?.as_bytes())
+                .await?;
 
-    #[serde_as(as = "DisplayFromStr")]
-    pub total: i32,
+            Ok(response)
+        }
+    }
+
+    pub async fn fetch_tracks_page(
+        &self,
+        page: i32,
+    ) -> Result<GetRecentTracksResponse, Box<dyn std::error::Error>> {
+        let query = {
+            let limit = 200.to_string();
+            let page = page.to_string();
+
+            let query_params: querystring::QueryParams = vec![
+                ("user", &self.user),
+                ("api_key", &self.api_key),
+                ("method", "user.getrecenttracks"),
+                ("format", "json"),
+                ("limit", &limit),
+                ("page", &page),
+            ];
+
+            String::from(querystring::stringify(query_params).trim_end_matches("&"))
+        };
+
+        let url = format!("https://ws.audioscrobbler.com/2.0/?{}", query);
+        let response = reqwest::get(url)
+            .await?
+            .json::<GetRecentTracksResponse>()
+            .await?;
+
+        Ok(response)
+    }
 }

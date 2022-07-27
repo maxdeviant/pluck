@@ -1,13 +1,15 @@
 mod lastfm;
 
-use std::{collections::HashMap, env};
+use std::collections::HashMap;
+use std::env;
+use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Utc};
 use dotenv::dotenv;
 use serde::Serialize;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-use lastfm::GetRecentTracksResponse;
+use crate::lastfm::LastfmFetcher;
 
 #[derive(Debug, Serialize)]
 struct Track {
@@ -28,10 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut current_page = 1;
 
-    let url = format!("https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user={user}&api_key={api_key}&format=json&page={page}&limit=200", user = lastfm_user, api_key = lastfm_api_key, page = current_page);
-    let response = reqwest::get(url)
-        .await?
-        .json::<GetRecentTracksResponse>()
+    let lastfm_fetcher = LastfmFetcher::new(lastfm_user, lastfm_api_key);
+
+    let response = lastfm_fetcher
+        .fetch_tracks_page_with_cache(current_page)
         .await?;
 
     let total_pages = response.recent_tracks.metadata.total_pages;
@@ -39,10 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         println!("Processing page {} of {}", current_page, total_pages);
 
-        let url = format!("https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user={user}&api_key={api_key}&format=json&page={page}&limit=200", user = lastfm_user, api_key = lastfm_api_key, page = current_page);
-        let response = reqwest::get(url)
-            .await?
-            .json::<GetRecentTracksResponse>()
+        let response = lastfm_fetcher
+            .fetch_tracks_page_with_cache(current_page)
             .await?;
 
         for track in response.recent_tracks.track {
@@ -63,6 +63,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if current_page > total_pages {
             break;
         }
+
+        if current_page % 10 == 0 {
+            println!("Taking a quick break...");
+
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+        }
     }
 
     #[derive(Debug, Serialize)]
@@ -73,8 +79,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (year, mut tracks) in tracks_by_year {
         tracks.sort_unstable_by(|a, b| b.listened_at.cmp(&a.listened_at));
 
-        let mut file = File::create(format!("last.fm/{}.toml", year)).await?;
-        file.write_all(toml::to_string_pretty(&YearData { tracks: tracks })?.as_bytes())
+        let mut file = File::create(format!(
+            "/Users/maxdeviant/projects/data/data/last.fm/{}.toml",
+            year
+        ))
+        .await?;
+        file.write_all(toml::to_string_pretty(&YearData { tracks })?.as_bytes())
             .await?;
     }
 
