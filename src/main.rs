@@ -1,11 +1,12 @@
 mod lastfm;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{collections::HashMap, path::Path};
 
 use chrono::{DateTime, Datelike, Utc};
 use clap::{Parser, Subcommand};
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-use crate::lastfm::LastfmFetcher;
+use crate::lastfm::{LastfmFetcher, PlayedOrNowPlayingTrack};
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Track {
@@ -126,7 +127,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     lastfm_fetcher.fetch_tracks_page(current_page).await?
                 };
 
-                for track in response.recent_tracks.track {
+                for track in
+                    response
+                        .recent_tracks
+                        .track
+                        .into_iter()
+                        .filter_map(|track| match track {
+                            PlayedOrNowPlayingTrack::Played(track) => Some(track),
+                            PlayedOrNowPlayingTrack::NowPlaying(_) => None,
+                        })
+                {
                     let track = Track {
                         name: track.name,
                         artist: track.artist.name,

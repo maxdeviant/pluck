@@ -11,10 +11,24 @@ pub struct GetRecentTracksResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecentTracks {
-    pub track: Vec<Track>,
+    pub track: Vec<PlayedOrNowPlayingTrack>,
 
     #[serde(rename = "@attr")]
     pub metadata: Metadata,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PlayedOrNowPlayingTrack {
+    Played(Track),
+    NowPlaying(NowPlayingTrack),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NowPlayingTrack {
+    pub name: String,
+    pub artist: Artist,
+    pub album: Album,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
