@@ -1,5 +1,6 @@
 mod lastfm;
 
+use std::cmp::Ordering;
 use std::env;
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -44,6 +45,7 @@ enum Command {
         #[clap(short, long, action)]
         full_sync: bool,
     },
+    SortTracks,
 }
 
 #[tokio::main]
@@ -53,6 +55,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
+        Command::SortTracks => {
+            let target_dir = Path::new("/Users/maxdeviant/projects/data/data/last.fm");
+
+            for entry in std::fs::read_dir(target_dir)? {
+                let entry = entry?;
+
+                let path = entry.path();
+                if path.is_file() && path.extension() == Some(OsStr::new("toml")) {
+                    let mut file = File::open(&path).await?;
+                    let mut buffer = String::new();
+                    file.read_to_string(&mut buffer).await?;
+
+                    let year_data: YearData = toml::from_str(&buffer)?;
+
+                    let mut tracks = year_data.tracks;
+
+                    tracks.sort_unstable_by(|a, b| match b.listened_at.cmp(&a.listened_at) {
+                        Ordering::Equal => b.name.cmp(&a.name),
+                        ord => ord,
+                    });
+
+                    let mut file = File::create(&path).await?;
+                    file.write_all(toml::to_string_pretty(&YearData { tracks })?.as_bytes())
+                        .await?;
+                }
+            }
+        }
         Command::Lastfm {
             output_dir,
             full_sync,
