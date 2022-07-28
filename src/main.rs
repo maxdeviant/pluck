@@ -4,8 +4,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Utc};
@@ -13,8 +12,8 @@ use clap::{Parser, Subcommand};
 use dotenv::dotenv;
 use indexmap::set::IndexSet;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::lastfm::{LastfmFetcher, PlayedOrNowPlayingTrack};
 
