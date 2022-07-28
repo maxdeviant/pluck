@@ -159,7 +159,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             for (year, mut tracks) in tracks_by_year {
-                tracks.sort_unstable_by(|a, b| b.listened_at.cmp(&a.listened_at));
+                tracks.sort_unstable_by(|a, b| match b.listened_at.cmp(&a.listened_at) {
+                    Ordering::Equal => b.name.cmp(&a.name),
+                    ord => ord,
+                });
 
                 let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
                 file.write_all(toml::to_string_pretty(&YearData { tracks })?.as_bytes())
