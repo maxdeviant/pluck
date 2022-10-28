@@ -35,13 +35,27 @@ struct Tweet {
     pub id: u64,
     pub created_at: DateTime<Utc>,
     pub text: String,
-    pub entities: TweetEntities,
+    pub entities: Option<TweetEntities>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct TweetEntities {
-    pub urls: Vec<TweetUrlEntity>,
+    pub urls: Option<Vec<TweetUrlEntity>>,
     pub media: Option<Vec<TweetMediaEntity>>,
+}
+
+impl TweetEntities {
+    pub fn is_empty(&self) -> bool {
+        self.urls.is_none() && self.media.is_none()
+    }
+
+    pub fn into_option(self) -> Option<TweetEntities> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,10 +65,32 @@ struct TweetUrlEntity {
     pub url: String,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MediaType {
+    #[serde(rename = "photo")]
+    Photo,
+
+    #[serde(rename = "video")]
+    Video,
+
+    #[serde(rename = "animated_gif")]
+    Gif,
+}
+
+impl From<egg_mode::entities::MediaType> for MediaType {
+    fn from(value: egg_mode::entities::MediaType) -> Self {
+        match value {
+            egg_mode::entities::MediaType::Photo => MediaType::Photo,
+            egg_mode::entities::MediaType::Video => MediaType::Video,
+            egg_mode::entities::MediaType::Gif => MediaType::Gif,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct TweetMediaEntity {
     pub id: u64,
-    pub r#type: String,
+    pub r#type: MediaType,
     pub url: String,
 }
 
@@ -204,43 +240,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let token = egg_mode::auth::bearer_token(&consumer_token).await?;
 
             let timeline = egg_mode::tweet::user_timeline("maxdeviant", false, false, &token)
-                .with_page_size(5);
+                .with_page_size(200);
 
-            let (_timeline, feed) = timeline.start().await?;
-            for tweet in feed.response {
-                let tweet = Tweet {
-                    id: tweet.id,
-                    text: tweet.text,
-                    entities: TweetEntities {
-                        urls: tweet
-                            .entities
-                            .urls
-                            .into_iter()
-                            .map(|entity| TweetUrlEntity {
-                                display_url: entity.display_url,
-                                expanded_url: entity.expanded_url,
-                                url: entity.url,
-                            })
-                            .collect(),
-                        media: tweet.entities.media.map(|media| {
-                            media
-                                .into_iter()
-                                .map(|entity| TweetMediaEntity {
-                                    id: entity.id,
-                                    r#type: toml::to_string(&entity.media_type).unwrap(),
-                                    url: entity.url,
-                                })
-                                .collect()
-                        }),
-                    },
-                    created_at: tweet.created_at,
-                };
+            let (mut timeline, mut feed) = timeline.start().await?;
 
-                let year = tweet.created_at.year();
-                let _is_new_tweet = tweets_by_year
-                    .entry(year)
-                    .or_insert(IndexSet::new())
-                    .insert(tweet);
+            'fetch_tweets: loop {
+                for tweet in feed.response.clone() {
+                    let tweet = Tweet {
+                        id: tweet.id,
+                        text: tweet.text,
+                        entities: TweetEntities {
+                            urls: {
+                                let urls = tweet
+                                    .entities
+                                    .urls
+                                    .into_iter()
+                                    .map(|entity| TweetUrlEntity {
+                                        display_url: entity.display_url,
+                                        expanded_url: entity.expanded_url,
+                                        url: entity.url,
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                if urls.is_empty() {
+                                    None
+                                } else {
+                                    Some(urls)
+                                }
+                            },
+                            media: tweet.entities.media.map(|media| {
+                                media
+                                    .into_iter()
+                                    .map(|entity| TweetMediaEntity {
+                                        id: entity.id,
+                                        r#type: entity.media_type.into(),
+                                        url: entity.media_url_https,
+                                    })
+                                    .collect()
+                            }),
+                        }
+                        .into_option(),
+                        created_at: tweet.created_at,
+                    };
+
+                    let year = tweet.created_at.year();
+                    let is_new_tweet = tweets_by_year
+                        .entry(year)
+                        .or_insert(IndexSet::new())
+                        .insert(tweet);
+
+                    if !is_new_tweet {
+                        break 'fetch_tweets;
+                    }
+                }
+
+                (timeline, feed) = timeline.older(None).await?;
+
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
 
             for (year, mut tweets) in tweets_by_year {
