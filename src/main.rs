@@ -30,6 +30,39 @@ struct YearData {
     tracks: IndexSet<Track>,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct Tweet {
+    pub id: u64,
+    pub created_at: DateTime<Utc>,
+    pub text: String,
+    pub entities: TweetEntities,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct TweetEntities {
+    pub urls: Vec<TweetUrlEntity>,
+    pub media: Option<Vec<TweetMediaEntity>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct TweetUrlEntity {
+    pub display_url: String,
+    pub expanded_url: Option<String>,
+    pub url: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct TweetMediaEntity {
+    pub id: u64,
+    pub r#type: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TwitterYearData {
+    tweets: IndexSet<Tweet>,
+}
+
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -40,6 +73,12 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     Lastfm {
+        output_dir: PathBuf,
+
+        #[clap(short, long, action)]
+        full_sync: bool,
+    },
+    Twitter {
         output_dir: PathBuf,
 
         #[clap(short, long, action)]
@@ -147,6 +186,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
                 file.write_all(toml::to_string_pretty(&YearData { tracks })?.as_bytes())
+                    .await?;
+            }
+        }
+        Command::Twitter {
+            output_dir,
+            full_sync,
+        } => {
+            let twitter_consumer_key = env::var("TWITTER_CONSUMER_KEY")?;
+            let twitter_consumer_secret = env::var("TWITTER_CONSUMER_SECRET")?;
+
+            let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
+
+            let consumer_token =
+                egg_mode::KeyPair::new(twitter_consumer_key, twitter_consumer_secret);
+
+            let token = egg_mode::auth::bearer_token(&consumer_token).await?;
+
+            let timeline = egg_mode::tweet::user_timeline("maxdeviant", false, false, &token)
+                .with_page_size(5);
+
+            let (_timeline, feed) = timeline.start().await?;
+            for tweet in feed.response {
+                let tweet = Tweet {
+                    id: tweet.id,
+                    text: tweet.text,
+                    entities: TweetEntities {
+                        urls: tweet
+                            .entities
+                            .urls
+                            .into_iter()
+                            .map(|entity| TweetUrlEntity {
+                                display_url: entity.display_url,
+                                expanded_url: entity.expanded_url,
+                                url: entity.url,
+                            })
+                            .collect(),
+                        media: tweet.entities.media.map(|media| {
+                            media
+                                .into_iter()
+                                .map(|entity| TweetMediaEntity {
+                                    id: entity.id,
+                                    r#type: toml::to_string(&entity.media_type).unwrap(),
+                                    url: entity.url,
+                                })
+                                .collect()
+                        }),
+                    },
+                    created_at: tweet.created_at,
+                };
+
+                let year = tweet.created_at.year();
+                let _is_new_tweet = tweets_by_year
+                    .entry(year)
+                    .or_insert(IndexSet::new())
+                    .insert(tweet);
+            }
+
+            for (year, mut tweets) in tweets_by_year {
+                tweets.sort_unstable_by(|a, b| b.id.cmp(&a.id));
+
+                let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
+                file.write_all(toml::to_string_pretty(&TwitterYearData { tweets })?.as_bytes())
                     .await?;
             }
         }
