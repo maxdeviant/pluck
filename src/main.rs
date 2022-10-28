@@ -1,4 +1,5 @@
 mod lastfm;
+mod twitter;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use indexmap::set::IndexSet;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use twitter::TwitterArchiveImporter;
 
 use crate::lastfm::{LastfmFetcher, PlayedOrNowPlayingTrack};
 
@@ -37,6 +39,88 @@ struct Tweet {
     pub text: String,
     pub entities: Option<TweetEntities>,
 }
+
+impl From<egg_mode::tweet::Tweet> for Tweet {
+    fn from(tweet: egg_mode::tweet::Tweet) -> Self {
+        Self {
+            id: tweet.id,
+            text: tweet.text,
+            entities: TweetEntities {
+                urls: {
+                    let urls = tweet
+                        .entities
+                        .urls
+                        .into_iter()
+                        .map(|entity| TweetUrlEntity {
+                            display_url: entity.display_url,
+                            expanded_url: entity.expanded_url,
+                            url: entity.url,
+                        })
+                        .collect::<Vec<_>>();
+
+                    if urls.is_empty() {
+                        None
+                    } else {
+                        Some(urls)
+                    }
+                },
+                media: tweet.entities.media.map(|media| {
+                    media
+                        .into_iter()
+                        .map(|entity| TweetMediaEntity {
+                            id: entity.id,
+                            r#type: entity.media_type.into(),
+                            url: entity.media_url_https,
+                        })
+                        .collect()
+                }),
+            }
+            .into_option(),
+            created_at: tweet.created_at,
+        }
+    }
+}
+
+// impl From<twitter::ArchivedTweet> for Tweet {
+//     fn from(tweet: twitter::ArchivedTweet) -> Self {
+//         Self {
+//             id: tweet.id,
+//             text: tweet.full_text,
+//             entities: TweetEntities {
+//                 urls: {
+//                     let urls = tweet
+//                         .entities
+//                         .urls
+//                         .into_iter()
+//                         .map(|entity| TweetUrlEntity {
+//                             display_url: entity.display_url,
+//                             expanded_url: entity.expanded_url,
+//                             url: entity.url,
+//                         })
+//                         .collect::<Vec<_>>();
+
+//                     if urls.is_empty() {
+//                         None
+//                     } else {
+//                         Some(urls)
+//                     }
+//                 },
+//                 media: tweet.entities.media.map(|media| {
+//                     media
+//                         .into_iter()
+//                         .map(|entity| TweetMediaEntity {
+//                             id: entity.id,
+//                             r#type: entity.media_type.into(),
+//                             url: entity.media_url_https,
+//                         })
+//                         .collect()
+//                 }),
+//             }
+//             .into_option(),
+//             created_at: tweet.created_at,
+//         }
+//     }
+// }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct TweetEntities {
@@ -87,6 +171,16 @@ impl From<egg_mode::entities::MediaType> for MediaType {
     }
 }
 
+impl From<twitter::MediaType> for MediaType {
+    fn from(value: twitter::MediaType) -> Self {
+        match value {
+            twitter::MediaType::Photo => MediaType::Photo,
+            twitter::MediaType::Video => MediaType::Video,
+            twitter::MediaType::Gif => MediaType::Gif,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct TweetMediaEntity {
     pub id: u64,
@@ -119,6 +213,9 @@ enum Command {
 
         #[clap(short, long, action)]
         full_sync: bool,
+
+        #[clap(long, action)]
+        from_archive: bool,
     },
 }
 
@@ -228,83 +325,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Twitter {
             output_dir,
             full_sync,
+            from_archive,
         } => {
-            let twitter_consumer_key = env::var("TWITTER_CONSUMER_KEY")?;
-            let twitter_consumer_secret = env::var("TWITTER_CONSUMER_SECRET")?;
+            if !from_archive {
+                let twitter_consumer_key = env::var("TWITTER_CONSUMER_KEY")?;
+                let twitter_consumer_secret = env::var("TWITTER_CONSUMER_SECRET")?;
 
-            let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
+                let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
 
-            let consumer_token =
-                egg_mode::KeyPair::new(twitter_consumer_key, twitter_consumer_secret);
+                let consumer_token =
+                    egg_mode::KeyPair::new(twitter_consumer_key, twitter_consumer_secret);
 
-            let token = egg_mode::auth::bearer_token(&consumer_token).await?;
+                let token = egg_mode::auth::bearer_token(&consumer_token).await?;
 
-            let timeline = egg_mode::tweet::user_timeline("maxdeviant", false, false, &token)
-                .with_page_size(200);
+                let timeline = egg_mode::tweet::user_timeline("maxdeviant", false, false, &token)
+                    .with_page_size(200);
 
-            let (mut timeline, mut feed) = timeline.start().await?;
+                let (mut timeline, mut feed) = timeline.start().await?;
 
-            'fetch_tweets: loop {
-                for tweet in feed.response.clone() {
-                    let tweet = Tweet {
-                        id: tweet.id,
-                        text: tweet.text,
-                        entities: TweetEntities {
-                            urls: {
-                                let urls = tweet
-                                    .entities
-                                    .urls
-                                    .into_iter()
-                                    .map(|entity| TweetUrlEntity {
-                                        display_url: entity.display_url,
-                                        expanded_url: entity.expanded_url,
-                                        url: entity.url,
-                                    })
-                                    .collect::<Vec<_>>();
+                'fetch_tweets: loop {
+                    for tweet in feed.response.clone() {
+                        let tweet = Tweet::from(tweet);
 
-                                if urls.is_empty() {
-                                    None
-                                } else {
-                                    Some(urls)
-                                }
-                            },
-                            media: tweet.entities.media.map(|media| {
-                                media
-                                    .into_iter()
-                                    .map(|entity| TweetMediaEntity {
-                                        id: entity.id,
-                                        r#type: entity.media_type.into(),
-                                        url: entity.media_url_https,
-                                    })
-                                    .collect()
-                            }),
+                        let year = tweet.created_at.year();
+                        let is_new_tweet = tweets_by_year
+                            .entry(year)
+                            .or_insert(IndexSet::new())
+                            .insert(tweet);
+
+                        if !is_new_tweet {
+                            break 'fetch_tweets;
                         }
-                        .into_option(),
-                        created_at: tweet.created_at,
-                    };
-
-                    let year = tweet.created_at.year();
-                    let is_new_tweet = tweets_by_year
-                        .entry(year)
-                        .or_insert(IndexSet::new())
-                        .insert(tweet);
-
-                    if !is_new_tweet {
-                        break 'fetch_tweets;
                     }
+
+                    (timeline, feed) = timeline.older(None).await?;
+
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
 
-                (timeline, feed) = timeline.older(None).await?;
+                for (year, mut tweets) in tweets_by_year {
+                    tweets.sort_unstable_by(|a, b| b.id.cmp(&a.id));
 
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
+                    let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
+                    file.write_all(toml::to_string_pretty(&TwitterYearData { tweets })?.as_bytes())
+                        .await?;
+                }
+            } else {
+                let archive_files = vec!["../../twitter-backup/data/tweets.js"];
 
-            for (year, mut tweets) in tweets_by_year {
-                tweets.sort_unstable_by(|a, b| b.id.cmp(&a.id));
+                let archive_importer = TwitterArchiveImporter::new(archive_files);
 
-                let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
-                file.write_all(toml::to_string_pretty(&TwitterYearData { tweets })?.as_bytes())
-                    .await?;
+                // let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
+
+                let tweets = archive_importer.get_tweets()?;
+                for tweet in tweets {
+                    let tweet = dbg!(tweet);
+                    // let tweet = Tweet::from(tweet);
+
+                    // let year = tweet.created_at.year();
+                    // let is_new_tweet = tweets_by_year
+                    //     .entry(year)
+                    //     .or_insert(IndexSet::new())
+                    //     .insert(tweet);
+                }
+
+                // for (year, mut tweets) in tweets_by_year {
+                //     tweets.sort_unstable_by(|a, b| b.id.cmp(&a.id));
+
+                //     let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
+                //     file.write_all(toml::to_string_pretty(&TwitterYearData { tweets })?.as_bytes())
+                //         .await?;
+                // }
             }
         }
     }
