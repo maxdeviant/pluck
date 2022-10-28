@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -33,10 +33,17 @@ pub struct ArchivedTweetEntities {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ArchivedTweetUrlEntity {
+pub struct WellFormedArchivedTweetUrlEntity {
     pub display_url: String,
     pub expanded_url: Option<String>,
     pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ArchivedTweetUrlEntity {
+    WellFormed(WellFormedArchivedTweetUrlEntity),
+    Malformed { url: String },
 }
 
 #[derive(Debug, Copy, Clone, Deserialize)]
@@ -112,10 +119,9 @@ impl TwitterArchiveImporter {
         let mut buffer = String::new();
         tweet_file.read_to_string(&mut buffer)?;
 
-        let buffer = buffer.replace("window.YTD.tweets.part0 = ", "");
-
-        // let tweets: Vec<ArchivedTweetWrapper> = serde_json::from_str(&buffer)?;
-        // let tweets = tweets.into_iter().map(|tweet| tweet.tweet).collect();
+        let buffer = buffer
+            .replace("window.YTD.tweets.part0 = ", "")
+            .replace("window.YTD.tweets.part1 = ", "");
 
         let raw_tweets: Vec<serde_json::Value> = serde_json::from_str(&buffer)?;
 

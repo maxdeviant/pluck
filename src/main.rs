@@ -371,7 +371,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await?;
                 }
             } else {
-                let archive_files = vec!["../../twitter-backup/data/tweets.js"];
+                let archive_files = vec![
+                    "../../twitter-backup/data/tweets.js",
+                    "../../twitter-backup/data/tweets-part1.js",
+                ];
 
                 let archive_importer = TwitterArchiveImporter::new(archive_files);
 
@@ -379,7 +382,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let tweets = archive_importer.get_tweets()?;
                 for tweet in tweets {
-                    let tweet = dbg!(tweet);
+                    // let tweet = dbg!(tweet);
                     // let tweet = Tweet::from(tweet);
 
                     // let year = tweet.created_at.year();
