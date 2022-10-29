@@ -2,15 +2,33 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Deserializer};
 use serde_with::{serde_as, DisplayFromStr};
+
+/// The date format used by tweets stored in a Twitter archive.
+///
+/// Matches the following format: `Fri Sep 28 22:03:55 +0000 2018`.
+const DATE_FORMAT: &'static str = "%a %b %d %H:%M:%S %z %Y";
+
+pub fn deserialize_date<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Utc.datetime_from_str(&s, DATE_FORMAT)
+        .map_err(serde::de::Error::custom)
+}
 
 #[serde_as]
 #[derive(Debug, Deserialize)]
 pub struct ArchivedTweet {
     #[serde_as(as = "DisplayFromStr")]
     pub id: u64,
-    // pub created_at: DateTime<Utc>,
+
+    #[serde(deserialize_with = "deserialize_date")]
+    pub created_at: DateTime<Utc>,
+
     pub full_text: String,
     pub entities: ArchivedTweetEntities,
 }
