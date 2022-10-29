@@ -364,21 +364,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             full_sync,
             from_archive,
         } => {
+            let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
+
+            let latest_year_data = if !full_sync {
+                get_latest_twitter_year_data(&output_dir).await?
+            } else {
+                None
+            };
+
+            if let Some((latest_year, latest_year_data)) = latest_year_data {
+                tweets_by_year.insert(latest_year, latest_year_data.tweets);
+            }
+
             if !from_archive {
                 let twitter_consumer_key = env::var("TWITTER_CONSUMER_KEY")?;
                 let twitter_consumer_secret = env::var("TWITTER_CONSUMER_SECRET")?;
-
-                let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
-
-                let latest_year_data = if !full_sync {
-                    get_latest_twitter_year_data(&output_dir).await?
-                } else {
-                    None
-                };
-
-                if let Some((latest_year, latest_year_data)) = latest_year_data {
-                    tweets_by_year.insert(latest_year, latest_year_data.tweets);
-                }
 
                 let consumer_token =
                     egg_mode::KeyPair::new(twitter_consumer_key, twitter_consumer_secret);
@@ -424,8 +424,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ];
 
                 let archive_importer = TwitterArchiveImporter::new(archive_files);
-
-                let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
 
                 let tweets = archive_importer.get_tweets()?;
                 for tweet in tweets {
