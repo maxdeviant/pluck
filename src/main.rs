@@ -38,6 +38,7 @@ struct Tweet {
     pub created_at: DateTime<Utc>,
     pub text: String,
     pub entities: Option<TweetEntities>,
+    pub in_reply_to: Option<TweetReply>,
 }
 
 impl From<egg_mode::tweet::Tweet> for Tweet {
@@ -76,6 +77,18 @@ impl From<egg_mode::tweet::Tweet> for Tweet {
                 }),
             }
             .into_option(),
+            in_reply_to: match (
+                tweet.in_reply_to_status_id,
+                tweet.in_reply_to_user_id,
+                tweet.in_reply_to_screen_name,
+            ) {
+                (Some(status_id), Some(user_id), Some(user_name)) => Some(TweetReply {
+                    status_id,
+                    user_id,
+                    user_name,
+                }),
+                _ => None,
+            },
             created_at: tweet.created_at,
         }
     }
@@ -122,6 +135,18 @@ impl From<twitter::ArchivedTweet> for Tweet {
                 }),
             }
             .into_option(),
+            in_reply_to: match (
+                tweet.in_reply_to_status_id,
+                tweet.in_reply_to_user_id,
+                tweet.in_reply_to_screen_name,
+            ) {
+                (Some(status_id), Some(user_id), Some(user_name)) => Some(TweetReply {
+                    status_id,
+                    user_id,
+                    user_name,
+                }),
+                _ => None,
+            },
             created_at: tweet.created_at,
         }
     }
@@ -191,6 +216,13 @@ struct TweetMediaEntity {
     pub id: u64,
     pub r#type: MediaType,
     pub url: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct TweetReply {
+    pub status_id: u64,
+    pub user_id: u64,
+    pub user_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -343,7 +375,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let token = egg_mode::auth::bearer_token(&consumer_token).await?;
 
-                let timeline = egg_mode::tweet::user_timeline("maxdeviant", false, false, &token)
+                let timeline = egg_mode::tweet::user_timeline("maxdeviant", true, false, &token)
                     .with_page_size(200);
 
                 let (mut timeline, mut feed) = timeline.start().await?;

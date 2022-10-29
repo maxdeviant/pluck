@@ -30,6 +30,14 @@ pub struct ArchivedTweet {
     pub created_at: DateTime<Utc>,
 
     pub full_text: String,
+
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pub in_reply_to_status_id: Option<u64>,
+
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pub in_reply_to_user_id: Option<u64>,
+
+    pub in_reply_to_screen_name: Option<String>,
     pub entities: ArchivedTweetEntities,
 }
 
