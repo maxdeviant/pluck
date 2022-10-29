@@ -370,6 +370,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let mut tweets_by_year: HashMap<i32, IndexSet<Tweet>> = HashMap::new();
 
+                let latest_year_data = if !full_sync {
+                    get_latest_twitter_year_data(&output_dir).await?
+                } else {
+                    None
+                };
+
+                if let Some((latest_year, latest_year_data)) = latest_year_data {
+                    tweets_by_year.insert(latest_year, latest_year_data.tweets);
+                }
+
                 let consumer_token =
                     egg_mode::KeyPair::new(twitter_consumer_key, twitter_consumer_secret);
 
@@ -470,6 +480,41 @@ async fn get_latest_year_data(
             .expect("invalid filename")
             .parse()?;
         let year_data: YearData = toml::from_str(&buffer)?;
+
+        Ok(Some((year, year_data)))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn get_latest_twitter_year_data(
+    target_dir: &Path,
+) -> Result<Option<(i32, TwitterYearData)>, Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+
+    for entry in std::fs::read_dir(target_dir)? {
+        let entry = entry?;
+
+        let path = entry.path();
+        if path.is_file() && path.extension() == Some(OsStr::new("toml")) {
+            files.push(path);
+        }
+    }
+
+    files.sort_unstable();
+
+    if let Some(filepath) = files.pop() {
+        let mut file = File::open(&filepath).await?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).await?;
+
+        let year: i32 = filepath
+            .file_stem()
+            .expect("no filename")
+            .to_str()
+            .expect("invalid filename")
+            .parse()?;
+        let year_data: TwitterYearData = toml::from_str(&buffer)?;
 
         Ok(Some((year, year_data)))
     } else {
