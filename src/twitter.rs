@@ -139,7 +139,10 @@ impl TwitterArchiveImporter {
 
         let buffer = buffer
             .replace("window.YTD.tweets.part0 = ", "")
-            .replace("window.YTD.tweets.part1 = ", "");
+            .replace("window.YTD.tweets.part1 = ", "")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">");
 
         let raw_tweets: Vec<serde_json::Value> = serde_json::from_str(&buffer)?;
 
