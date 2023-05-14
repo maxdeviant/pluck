@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use atrium_api::app::bsky::feed::defs::FeedViewPostReasonEnum;
 use atrium_api::xrpc;
 use http::{Request, Response};
 
@@ -59,8 +60,20 @@ impl BlueskyFetcher {
 
         let mut posts = Vec::new();
 
-        for post in response.feed {
-            let post = post.post;
+        for feed_view_post in response.feed {
+            let post = feed_view_post.post;
+
+            let is_repost = if let Some(reason) = feed_view_post.reason {
+                match *reason {
+                    FeedViewPostReasonEnum::ReasonRepost(_) => true,
+                }
+            } else {
+                false
+            };
+
+            if is_repost {
+                continue;
+            }
 
             match post.record {
                 Record::AppBskyFeedPost(record) => {
