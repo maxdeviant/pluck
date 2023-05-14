@@ -3,7 +3,7 @@ use atrium_api::app::bsky::feed::defs::FeedViewPostReasonEnum;
 use atrium_api::xrpc;
 use http::{Request, Response};
 
-use crate::BlueskyPost;
+use crate::{BlueskyPost, BlueskyPostReply};
 
 pub(crate) struct FetchPostsOutput {
     pub posts: Vec<BlueskyPost>,
@@ -54,16 +54,12 @@ impl BlueskyFetcher {
 
         let cursor = response.cursor.clone();
 
-        let response = dbg!(response);
-
         use atrium_api::records::Record;
 
         let mut posts = Vec::new();
 
         for feed_view_post in response.feed {
-            let post = feed_view_post.post;
-
-            let is_repost = if let Some(reason) = feed_view_post.reason {
+            let is_repost = if let Some(reason) = feed_view_post.clone().reason {
                 match *reason {
                     FeedViewPostReasonEnum::ReasonRepost(_) => true,
                 }
@@ -75,12 +71,23 @@ impl BlueskyFetcher {
                 continue;
             }
 
+            let feed_view_post = dbg!(feed_view_post);
+
+            let in_reply_to = feed_view_post.reply.map(|reply| BlueskyPostReply {
+                uri: reply.parent.uri,
+                author_did: reply.parent.author.did,
+                author_handle: reply.parent.author.handle,
+            });
+
+            let post = feed_view_post.post;
+
             match post.record {
                 Record::AppBskyFeedPost(record) => {
                     posts.push(BlueskyPost {
                         uri: post.uri,
                         text: record.text,
                         created_at: record.created_at.parse()?,
+                        in_reply_to,
                     });
                 }
                 _ => {}

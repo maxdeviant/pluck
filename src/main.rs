@@ -26,6 +26,14 @@ struct BlueskyPost {
     pub uri: String,
     pub created_at: DateTime<Utc>,
     pub text: String,
+    pub in_reply_to: Option<BlueskyPostReply>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct BlueskyPostReply {
+    pub uri: String,
+    pub author_did: String,
+    pub author_handle: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
