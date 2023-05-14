@@ -71,8 +71,6 @@ impl BlueskyFetcher {
                 continue;
             }
 
-            let feed_view_post = dbg!(feed_view_post);
-
             let in_reply_to = feed_view_post.reply.map(|reply| BlueskyPostReply {
                 uri: reply.parent.uri,
                 author_did: reply.parent.author.did,
