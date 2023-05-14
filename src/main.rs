@@ -1,3 +1,4 @@
+mod bluesky;
 mod lastfm;
 mod twitter;
 
@@ -8,6 +9,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use bluesky::{BlueskyFetcher, FetchPostsOutput};
 use chrono::{DateTime, Datelike, Utc};
 use clap::{Parser, Subcommand};
 use dotenv::dotenv;
@@ -18,6 +20,26 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use twitter::TwitterArchiveImporter;
 
 use crate::lastfm::{LastfmFetcher, PlayedOrNowPlayingTrack};
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct BlueskyPost {
+    pub uri: String,
+    pub created_at: DateTime<Utc>,
+    pub text: String,
+    pub in_reply_to: Option<BlueskyPostReply>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct BlueskyPostReply {
+    pub uri: String,
+    pub author_did: String,
+    pub author_handle: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BlueskyYearData {
+    posts: IndexSet<BlueskyPost>,
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Track {
@@ -239,6 +261,12 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Bluesky {
+        output_dir: PathBuf,
+
+        #[clap(short, long, action)]
+        full_sync: bool,
+    },
     Lastfm {
         output_dir: PathBuf,
 
@@ -263,6 +291,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
+        Command::Bluesky {
+            output_dir,
+            full_sync,
+        } => {
+            let bluesky_handle = env::var("BLUESKY_HANDLE")?;
+            let bluesky_app_password = env::var("BLUESKY_APP_PASSWORD")?;
+
+            let mut posts_by_year: HashMap<i32, IndexSet<BlueskyPost>> = HashMap::new();
+
+            let latest_year_data = if !full_sync {
+                get_latest_bluesky_year_data(&output_dir).await?
+            } else {
+                None
+            };
+
+            if let Some((latest_year, latest_year_data)) = latest_year_data {
+                posts_by_year.insert(latest_year, latest_year_data.posts);
+            }
+
+            let mut bluesky_fetcher = BlueskyFetcher::new(bluesky_handle, bluesky_app_password);
+
+            let FetchPostsOutput {
+                posts: mut fetched_posts,
+                mut cursor,
+            } = bluesky_fetcher.fetch_posts(None).await?;
+
+            'fetch_posts: loop {
+                for post in fetched_posts {
+                    let year = post.created_at.year();
+                    let is_new_post = posts_by_year
+                        .entry(year)
+                        .or_insert(IndexSet::new())
+                        .insert(post);
+
+                    if !is_new_post {
+                        break 'fetch_posts;
+                    }
+                }
+
+                FetchPostsOutput {
+                    posts: fetched_posts,
+                    cursor,
+                } = bluesky_fetcher.fetch_posts(cursor).await?;
+
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
+
+            for (year, mut posts) in posts_by_year {
+                posts.sort_unstable_by(|a, b| b.uri.cmp(&a.uri));
+
+                let mut file = File::create(output_dir.join(format!("{}.toml", year))).await?;
+                file.write_all(toml::to_string_pretty(&BlueskyYearData { posts })?.as_bytes())
+                    .await?;
+            }
+        }
         Command::Lastfm {
             output_dir,
             full_sync,
@@ -478,6 +561,41 @@ async fn get_latest_year_data(
             .expect("invalid filename")
             .parse()?;
         let year_data: YearData = toml::from_str(&buffer)?;
+
+        Ok(Some((year, year_data)))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn get_latest_bluesky_year_data(
+    target_dir: &Path,
+) -> Result<Option<(i32, BlueskyYearData)>, Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+
+    for entry in std::fs::read_dir(target_dir)? {
+        let entry = entry?;
+
+        let path = entry.path();
+        if path.is_file() && path.extension() == Some(OsStr::new("toml")) {
+            files.push(path);
+        }
+    }
+
+    files.sort_unstable();
+
+    if let Some(filepath) = files.pop() {
+        let mut file = File::open(&filepath).await?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).await?;
+
+        let year: i32 = filepath
+            .file_stem()
+            .expect("no filename")
+            .to_str()
+            .expect("invalid filename")
+            .parse()?;
+        let year_data: BlueskyYearData = toml::from_str(&buffer)?;
 
         Ok(Some((year, year_data)))
     } else {

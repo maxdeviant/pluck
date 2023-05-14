@@ -1,0 +1,5 @@
+{
+  "rust-analyzer.procMacro.ignored": {
+    "async-trait": ["async_trait"]
+  }
+}
