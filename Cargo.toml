@@ -8,8 +8,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.71"
 async-trait = "0.1.68"
-atrium-api = { version = "0.24.0", features = ["agent"] }
-atrium-xrpc-client = { version = "0.5.6", default-features = false, features = ["reqwest"] }
+atrium-api = { version = "0.24.6", features = ["agent"] }
+atrium-xrpc-client = { version = "0.5.8", default-features = false, features = ["reqwest"] }
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "3.2", features = ["derive"] }
 dotenv = "0.15"
